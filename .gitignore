@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment (never commit — recreate with pip install -r requirements.txt)
+.venv/
+venv/
+ENV/
+
+# Data files — state and trade history are local; don't commit live session data
+data/trader_state.json
+data/trader_state.tmp
+
+# But DO commit the datasheet template (empty) if we add one later.
+# data/trade_datasheet.csv  ← intentionally NOT ignored so trades are tracked
+
+# Pytest cache
+.pytest_cache/
+*.egg-info/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+nohup.out

@@ -63,3 +63,49 @@ STARTING_FAKE_BALANCE_USDT = 10_000.0
 # until that's done — doing so would mean simulating liquidations with
 # unverified math, which breaks the "never fake a number" rule.
 MAX_LEVERAGE = 1
+
+# ── Indian Stock Market (NSE) ─────────────────────────────────────────────────
+# The master list of NSE-listed stocks the bot is allowed to monitor and trade.
+# Use the Yahoo Finance ticker format: NSE symbols end with ".NS".
+# Additional stocks discovered via news headlines are merged in at runtime.
+#
+# These are liquid, high-volume NSE stocks spanning a wide price range —
+# lower-priced stocks (e.g. TATASTEEL) will automatically result in larger
+# share quantities being bought for the same budget ("bulk buying").
+#
+# Source for valid NSE tickers: https://www.nseindia.com/ (2026-06-24)
+STOCK_WATCHLIST = [
+    "RELIANCE.NS",    # Reliance Industries   ~₹3,000
+    "TCS.NS",         # Tata Consultancy Svcs ~₹4,000
+    "HDFCBANK.NS",    # HDFC Bank             ~₹1,900
+    "INFY.NS",        # Infosys               ~₹1,800
+    "TATASTEEL.NS",   # Tata Steel            ~₹165   → higher qty per budget
+    "ITC.NS",         # ITC Ltd               ~₹490
+    "SBIN.NS",        # State Bank of India   ~₹790
+    "ONGC.NS",        # Oil & Natural Gas     ~₹275   → higher qty per budget
+]
+
+# ── Currency conversion (INR → USD) ──────────────────────────────────────────
+# All portfolio accounting is in USD to unify crypto and stock capital.
+# Update this rate whenever the INR/USD rate drifts significantly.
+# Approximate rate as of 2026-06-24: 1 USD ≈ 83.50 INR
+USD_INR_RATE = 83.50
+
+# ── Indian Stock Delivery Fee Schedule ───────────────────────────────────────
+# Source: https://zerodha.com/charges  (verified 2026-06-24)
+# Zerodha Equity Delivery (NSE):
+STOCK_STT_RATE      = 0.001       # 0.1%  STT on both buy and sell
+STOCK_STAMP_RATE    = 0.00015     # 0.015% Stamp Duty on BUY side only
+STOCK_EXCH_RATE     = 0.0000343   # 0.00343% NSE exchange transaction charge
+STOCK_SEBI_RATE     = 0.000001    # 0.0001% SEBI turnover fee
+STOCK_GST_RATE      = 0.18        # 18% GST on (exchange + SEBI charges)
+STOCK_DP_CHARGE_INR = 15.93       # ₹15.93 flat per scrip on SELL (DP charges)
+# Note: Brokerage = ₹0 for Equity Delivery at Zerodha.
+
+# ── News Scanner Configuration ────────────────────────────────────────────────
+# When enabled, the bot scans RSS feeds from Economic Times and Moneycontrol
+# every NEWS_SCAN_INTERVAL_CYCLES polling cycles and adds any NSE-listed
+# companies found in the headlines to the effective monitoring pool.
+# The news does NOT auto-trigger trades — the SMA signal still decides entry.
+NEWS_SCAN_ENABLED        = True
+NEWS_SCAN_INTERVAL_CYCLES = 10    # Scan news once every 10 cycles (every ~10 min)

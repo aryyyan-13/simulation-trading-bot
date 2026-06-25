@@ -29,7 +29,7 @@ from engine.portfolio import PaperPortfolio
 # ── File locations ─────────────────────────────────────────────────────────
 STATE_FILE     = Path(__file__).parent.parent / "data" / "trader_state.json"
 DATASHEET_FILE = Path(__file__).parent.parent / "data" / "trade_datasheet.csv"
-_VERSION       = 3          # bump when the schema changes in a breaking way
+_VERSION       = 4          # bumped: added asset_class field to positions and trades
 
 
 # ── Dataclass: one open position snapshot ─────────────────────────────────
@@ -44,6 +44,7 @@ class OpenPositionSnapshot:
     entry_fee_paid:     float
     funding_paid_total: float
     entry_time_ms:      int    # wall-clock ms when the position was opened
+    asset_class:        str = "crypto"   # "crypto" | "stock"
 
 
 # ── Dataclass: one closed trade record ────────────────────────────────────
@@ -62,12 +63,14 @@ class ClosedTradeRecord:
     entry_time_ms: int
     exit_time_ms:  int
     exit_reason:   str = "signal"   # "signal" | "stop_loss"
+    asset_class:   str = "crypto"   # "crypto" | "stock"
 
 
 # ── CSV datasheet columns (written in this exact order) ───────────────────
 _CSV_FIELDS = [
     "timestamp",
     "symbol",
+    "market",          # NEW in v4: "crypto" or "stock"
     "side",
     "qty",
     "entry_price",
@@ -90,6 +93,7 @@ def _trade_to_csv_row(t: ClosedTradeRecord, balance_after: float) -> dict:
     return {
         "timestamp":    ts,
         "symbol":       t.symbol,
+        "market":       getattr(t, "asset_class", "crypto"),   # v4 field
         "side":         t.side,
         "qty":          f"{t.qty:.8f}",
         "entry_price":  f"{t.entry_price:.4f}",
@@ -268,25 +272,41 @@ class TraderState:
 
         version = raw.get("version", 1)
 
-        # ── Migrate v2 → v3 ─────────────────────────────────────────────
-        if version < 3:
+        # ── Migrate v2/v3 → v4 ──────────────────────────────────────────
+        if version < 4:
             open_positions: dict[str, OpenPositionSnapshot] = {}
-            if raw.get("open_position"):
+
+            if raw.get("open_positions"):
+                # v3 file already has the multi-symbol dict — just add asset_class
+                for sym, op_raw in raw["open_positions"].items():
+                    op_raw.pop("exit_reason", None)
+                    op_raw.setdefault("asset_class", "crypto")   # v4 migration
+                    open_positions[sym] = OpenPositionSnapshot(**op_raw)
+            elif raw.get("open_position"):
+                # v2 legacy: single open_position object
                 op_raw = raw["open_position"]
-                op_raw.pop("exit_reason", None)   # exit_reason is only on ClosedTradeRecord
+                op_raw.pop("exit_reason", None)
+                op_raw.setdefault("asset_class", "crypto")
                 open_positions[op_raw["symbol"]] = OpenPositionSnapshot(**op_raw)
 
             # v2 last_candle_time was {"1h": int, "1d": int, "1w": int}
-            old_times = raw.get("last_candle_time", {"1h": 0, "1d": 0, "1w": 0})
-            # Assign those old times to every symbol that has an open position
-            new_times: dict[str, dict[str, int]] = {}
-            for sym in (open_positions.keys() or [config.DEFAULT_SYMBOL]):
-                new_times[sym] = dict(old_times)
+            # v3 last_candle_time was already per-symbol — preserve it if present
+            raw_lct = raw.get("last_candle_time", {})
+            if raw_lct and isinstance(next(iter(raw_lct.values()), None), dict):
+                # Already per-symbol (v3 format) — carry forward as-is
+                new_times = raw_lct
+            else:
+                # v2 format — assign old flat times to each symbol
+                old_times = raw_lct or {"1h": 0, "1d": 0, "1w": 0}
+                new_times = {}
+                for sym in (open_positions.keys() or [config.DEFAULT_SYMBOL]):
+                    new_times[sym] = dict(old_times)
 
             closed_raw = raw.get("closed_trades", [])
             closed = []
             for t in closed_raw:
                 t.setdefault("exit_reason", "signal")
+                t.setdefault("asset_class", "crypto")   # v4 migration
                 closed.append(ClosedTradeRecord(**t))
 
             s = cls(
@@ -298,19 +318,21 @@ class TraderState:
                 next_funding_time_ms = raw.get("next_funding_time_ms", 0),
                 activity_log         = raw.get("activity_log", []),
             )
-            s.log("State migrated from v2 → v3 (multi-symbol schema).")
+            s.log("State migrated from v2/v3 → v4 (added asset_class field).")
             return s
 
-        # ── v3 native load ───────────────────────────────────────────────
+        # ── v3/v4 native load ────────────────────────────────────────────
         ops: dict[str, OpenPositionSnapshot] = {}
         for sym, op_raw in raw.get("open_positions", {}).items():
             op_raw.pop("exit_reason", None)   # exit_reason is only on ClosedTradeRecord
+            op_raw.setdefault("asset_class", "crypto")   # v4 migration
             ops[sym] = OpenPositionSnapshot(**op_raw)
 
         closed_raw = raw.get("closed_trades", [])
         closed = []
         for t in closed_raw:
             t.setdefault("exit_reason", "signal")
+            t.setdefault("asset_class", "crypto")   # v4 migration
             closed.append(ClosedTradeRecord(**t))
 
         return cls(

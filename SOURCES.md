@@ -103,3 +103,55 @@ by direct test: `host_not_allowed`). So:
   This will be verified before any leverage feature is added.
 - Exact current numeric values of the 30-day VIP fee tiers above Regular User:
   not needed yet since we use Regular User rates only.
+
+---
+
+## Indian Stock Market Integration (Added 2026-06-24)
+
+### 7. NSE / BSE Market Hours
+Official source: https://www.nseindia.com/
+- Trading hours: Monday–Friday, 9:15 AM to 3:30 PM Indian Standard Time (IST).
+- Market is closed on Indian public holidays. The official annual holiday
+  calendar is published by NSE before the start of each year at nseindia.com.
+- The 2026 holiday list used in `stock_client.py` is a best-effort set of
+  standard statutory holidays. **Verify against the official NSE 2026 holiday
+  list at nseindia.com before relying on it.**
+
+### 8. Zerodha Equity Delivery Fee Schedule
+Official page: https://zerodha.com/charges (verified 2026-06-24)
+> Equity Delivery: Brokerage = ₹0, STT = 0.1% on buy & sell,
+> Stamp Duty = 0.015% on buy side only, NSE Exchange Transaction Charge = 0.00343%,
+> SEBI Charges = 0.0001%, GST = 18% on (Exchange + SEBI charges),
+> DP Charges = ₹13.5 + GST = ₹15.93 flat per scrip on sell.
+Used in `config.py`:
+```
+STOCK_STT_RATE      = 0.001       # 0.1%
+STOCK_STAMP_RATE    = 0.00015     # 0.015% (buy only)
+STOCK_EXCH_RATE     = 0.0000343   # 0.00343% NSE
+STOCK_SEBI_RATE     = 0.000001    # 0.0001%
+STOCK_GST_RATE      = 0.18        # 18%
+STOCK_DP_CHARGE_INR = 15.93       # ₹15.93 flat per sell
+```
+
+### 9. Stock Data Source — yfinance
+Library: https://pypi.org/project/yfinance/
+- An open-source Python library that scrapes Yahoo Finance.
+- **Honest disclosure**: NSE stock data via Yahoo Finance has an
+  exchange-mandated delay of approximately 15 minutes. It is NOT true
+  real-time data. This is acceptable for a paper-trading system that signals
+  on hourly and daily candles, but should be disclosed.
+- NSE stocks use the `.NS` suffix in Yahoo Finance ticker format, e.g.,
+  `RELIANCE.NS`, `TCS.NS`. Source: https://finance.yahoo.com/
+- yfinance is unofficial and may break if Yahoo changes its internal API.
+  Raise `StockClientError` loudly on failure — never substitute a fake price.
+
+### 10. News Feed Sources (Free RSS, No API Key Required)
+- Economic Times — Market/Stocks RSS:
+  https://economictimes.indiatimes.com/markets/stocks/rss.cms
+- Moneycontrol — Latest News RSS:
+  https://www.moneycontrol.com/rss/latestnews.xml
+- Parsed using the `feedparser` Python library: https://pypi.org/project/feedparser/
+- **Honest disclosure**: The news scanner does keyword matching only — it is
+  NOT semantic analysis or AI prediction. A negative headline mentioning
+  "Reliance" will still flag Reliance as a candidate. The SMA trend signal
+  is the actual guard for trade entry.

@@ -1,6 +1,20 @@
 #!/usr/bin/env python3
 """
-Multi-Symbol Live Paper Trader (v3).
+Multi-Symbol Live Paper Trader (v4).
+
+Monitors crypto (Binance USDS-M Futures) AND Indian stocks (NSE via yfinance)
+across three timeframes (1h, 1d, 1w) simultaneously.  Executes paper trades
+when the 1h and 1d SMA signals agree.  Automatically cuts losing positions if
+they breach the configured stop-loss threshold.
+
+New in v4:
+  • Indian stock support — NSE symbols ending in ".NS" (e.g. RELIANCE.NS)
+  • News-driven watchlist expansion — RSS headlines from Economic Times and
+    Moneycontrol flag companies; SMA signal still gates actual entry
+  • Indian market hours guard — skips stock analysis outside 9:15–15:30 IST
+  • Zerodha-style delivery fees for stocks (STT, Stamp Duty, GST, DP charges)
+  • No funding settlements for stocks (stocks have no perpetual funding)
+  • All accounting in USD; INR prices converted at config.USD_INR_RATE
 
 Monitors all symbols in config.WATCHLIST across three timeframes (1h, 1d, 1w)
 with real Binance data and executes paper trades when the 1h and 1d SMA
@@ -38,14 +52,38 @@ from typing import Optional
 
 import config
 import exchange_client as ex
+import stock_client as sc
 from engine.execution import Side, close_position, compute_funding_payment
+from engine.stock_fees import compute_stock_buy_fee, compute_stock_sell_fee
+from news_scanner import get_effective_stock_watchlist
+from stock_client import StockClientError, is_nse_market_open
 from trader.signal_engine import MultiTimeframeResult, compute_signals
 from trader.state import ClosedTradeRecord, TraderState
+
+import socket
+socket.setdefaulttimeout(15.0)  # prevent indefinite hangs in blocking network requests
 
 # ── Constants ──────────────────────────────────────────────────────────────
 SLIPPAGE_RATE = 0.0005   # 0.05 % per side — estimate, not a verified number
 POSITION_FRAC = 0.95     # fraction of allocated budget committed per trade
 CANDLE_COUNTS = {"1h": 100, "1d": 50, "1w": 24}
+
+# ── Asset class helpers ────────────────────────────────────────────────────
+
+def _is_stock(symbol: str) -> bool:
+    """Return True if the symbol is an Indian NSE stock (ends with '.NS')."""
+    return symbol.upper().endswith(".NS")
+
+
+def _inr_to_usd(amount_inr: float) -> float:
+    """Convert INR to USD using the configured exchange rate."""
+    return amount_inr / config.USD_INR_RATE
+
+
+def _usd_to_inr(amount_usd: float) -> float:
+    """Convert USD to INR using the configured exchange rate."""
+    return amount_usd * config.USD_INR_RATE
+
 
 
 # ── Slippage helpers ───────────────────────────────────────────────────────
@@ -251,10 +289,15 @@ def _execute(
 # ── Data helpers ───────────────────────────────────────────────────────────
 
 def _fetch_closed_candles(symbol: str, interval: str, limit: int) -> list[dict]:
-    """Fetch candles for `symbol` and filter to only fully-closed bars."""
-    raw    = ex.get_klines(symbol, interval, limit=limit)
+    """Fetch candles for `symbol` from the right client and filter to closed bars."""
     now_ms = int(time.time() * 1000)
-    return [c for c in raw if c["close_time"] < now_ms]
+    if _is_stock(symbol):
+        raw = sc.get_nse_klines(symbol, interval, limit=limit)
+        # yfinance close_time equals open_time; all historical rows are closed
+        return raw
+    else:
+        raw = ex.get_klines(symbol, interval, limit=limit)
+        return [c for c in raw if c["close_time"] < now_ms]
 
 
 def _latest_closed(candles: list[dict]) -> Optional[dict]:
@@ -410,9 +453,102 @@ def _run_symbol_cycle(
     """
     Run one monitoring + execution cycle for a single symbol.
 
+    For crypto (Binance) symbols: fetches mark price + funding, applies
+    funding settlements, checks stop-loss, computes SMA signals, executes.
+
+    For Indian stock (.NS) symbols: checks NSE market hours first. If the
+    market is closed, skips this symbol entirely. If open, fetches price via
+    yfinance (INR → USD conversion), no funding, applies Zerodha-model fees.
+
     Returns: (MarkAndFunding | None, MultiTimeframeResult | None,
                new_candle_flags, action_string)
     """
+    is_stock = _is_stock(symbol)
+
+    # ── STOCK PATH ─────────────────────────────────────────────────────────
+    if is_stock:
+        # 1. Market hours guard
+        if not is_nse_market_open():
+            return None, None, {}, "[NSE CLOSED] market hours 9:15–15:30 IST (Mon–Fri)"
+
+        # 2. Fetch live price in INR → convert to USD
+        try:
+            price_inr = sc.get_nse_price(symbol)
+        except StockClientError as exc:
+            print(f"  [WARNING] {symbol}: could not fetch NSE price — {exc}")
+            return None, None, {}, "fetch error — skipped"
+
+        price_usd = _inr_to_usd(price_inr)
+
+        # 3. Stop-loss check (uses USD price for consistency)
+        op = state.open_positions.get(symbol)
+        if op and _is_stop_loss_triggered(op, price_usd) and not dry_run:
+            action = _close_position_for_symbol(
+                state, symbol, price_usd, reason="stop_loss", dry_run=False
+            )
+            return None, None, {}, f"[STOP LOSS] {action}"
+
+        # 4. Candles
+        try:
+            c1h = _fetch_closed_candles(symbol, "1h", CANDLE_COUNTS["1h"])
+            c1d = _fetch_closed_candles(symbol, "1d", CANDLE_COUNTS["1d"])
+            c1w = _fetch_closed_candles(symbol, "1w", CANDLE_COUNTS["1w"])
+        except StockClientError as exc:
+            print(f"  [WARNING] {symbol}: could not fetch NSE candles — {exc}")
+            return None, None, {}, "candle fetch error — skipped"
+
+        # Convert candle close prices from INR to USD so the signal engine
+        # works with USD-normalised values
+        def _convert(candles: list[dict]) -> list[dict]:
+            return [{**c, "close": _inr_to_usd(c["close"])} for c in candles]
+
+        c1h_usd = _convert(c1h)
+        c1d_usd = _convert(c1d)
+        c1w_usd = _convert(c1w)
+
+        # 5. Detect new candles
+        sym_times = state.get_candle_times(symbol)
+        lat1h = _latest_closed(c1h)
+        lat1d = _latest_closed(c1d)
+        lat1w = _latest_closed(c1w)
+        new1h = lat1h is not None and lat1h["open_time"] != sym_times["1h"]
+        new1d = lat1d is not None and lat1d["open_time"] != sym_times["1d"]
+        new1w = lat1w is not None and lat1w["open_time"] != sym_times["1w"]
+
+        # 6. Compute signals
+        analysis = compute_signals(c1h_usd, c1d_usd, c1w_usd)
+
+        # 7. Execute on new 1h candle
+        budget = _allocated_budget(state, watchlist)
+        action = "monitoring — waiting for a new 1h candle to close"
+        if new1h:
+            action = _execute(
+                state, symbol, analysis.trade_signal,
+                price_usd, budget, dry_run=dry_run,
+            )
+            sym_times["1h"] = lat1h["open_time"]
+
+        # 8. Update other timeframe timestamps
+        if new1d and lat1d:
+            sym_times["1d"] = lat1d["open_time"]
+            state.log(f"[{symbol}] New 1d candle closed @ ₹{lat1d['close']:,.2f} (${_inr_to_usd(lat1d['close']):.2f})")
+        if new1w and lat1w:
+            sym_times["1w"] = lat1w["open_time"]
+            state.log(f"[{symbol}] New 1w candle closed @ ₹{lat1w['close']:,.2f} (${_inr_to_usd(lat1w['close']):.2f})")
+
+        # Build a MarkAndFunding-like object for display (stocks have no funding)
+        # We reuse the crypto dataclass but set funding fields to zero
+        mf_stock = ex.MarkAndFunding(
+            symbol              = symbol,
+            mark_price          = price_usd,
+            index_price         = price_usd,
+            last_funding_rate   = 0.0,      # stocks have no funding
+            next_funding_time_ms = 0,
+            fetched_at          = time.time(),
+        )
+        return mf_stock, analysis, {"1h": new1h, "1d": new1d, "1w": new1w}, action
+
+    # ── CRYPTO PATH (unchanged) ─────────────────────────────────────────────
     # 1. Live mark price + funding
     try:
         mf = ex.get_mark_and_funding(symbol)
@@ -489,6 +625,7 @@ def _run_symbol_cycle(
     return mf, analysis, {"1h": new1h, "1d": new1d, "1w": new1w}, action
 
 
+
 # ── Full polling cycle (all symbols) ──────────────────────────────────────
 
 def run_cycle(
@@ -559,7 +696,8 @@ def main() -> None:
     if args.reset:
         state = TraderState.reset()
         print(f"Portfolio state reset.  Starting balance: ${TraderState().starting_balance:,.2f} paper money.")
-        print(f"Watchlist: {watchlist}")
+        print(f"Crypto watchlist : {config.WATCHLIST}")
+        print(f"Stock watchlist  : {config.STOCK_WATCHLIST}")
         state.save()
         return
 
@@ -575,7 +713,8 @@ def main() -> None:
         print(f"  Net P&L  : ${perf['net_realized']:+,.2f}  ({perf['total_return']:+.2f}%)")
         if state.open_positions:
             for sym, op in state.open_positions.items():
-                print(f"  Open pos : {sym}  {op.side} {op.qty:.6f} @ ${op.entry_price:,.2f}")
+                mkt = getattr(op, "asset_class", "crypto")
+                print(f"  Open pos : {sym} [{mkt}]  {op.side} {op.qty:.6f} @ ${op.entry_price:,.2f}")
         else:
             print(f"  Open pos : None")
         print(f"  Datasheet: data/trade_datasheet.csv  ({len(state.closed_trades)} rows)")
@@ -588,22 +727,44 @@ def main() -> None:
     if args.dry_run:
         print(f"\n  [DRY-RUN MODE] Signals computed — no trades executed.\n")
 
-    print(f"  Watchlist  : {watchlist}")
+    # Build effective watchlist: crypto + stocks (+ news candidates if enabled)
+    crypto_list = config.WATCHLIST
+    if config.NEWS_SCAN_ENABLED:
+        stock_list = get_effective_stock_watchlist(config.STOCK_WATCHLIST)
+    else:
+        stock_list = list(config.STOCK_WATCHLIST)
+    combined_watchlist = crypto_list + stock_list
+
+    print(f"  Crypto     : {crypto_list}")
+    print(f"  Stocks     : {stock_list}")
+    print(f"  Total      : {len(combined_watchlist)} symbols")
     print(f"  Stop-loss  : {config.STOP_LOSS_PCT:.1%} per position" if config.STOP_LOSS_PCT else "  Stop-loss  : disabled")
     print(f"  Slippage   : ±{SLIPPAGE_RATE*100:.2f}% (estimate — see SOURCES.md)")
+    print(f"  INR→USD    : 1 USD = ₹{config.USD_INR_RATE:.2f} (update config.USD_INR_RATE as needed)")
+    print(f"  News scan  : {'every ' + str(config.NEWS_SCAN_INTERVAL_CYCLES) + ' cycles' if config.NEWS_SCAN_ENABLED else 'disabled'}")
     print()
+
+    _cycle_count = 0
 
     if args.loop:
         print(f"  Starting live monitoring loop (interval: {args.interval}s).  Ctrl-C to stop.\n")
         try:
             while True:
-                state = run_cycle(state, watchlist, dry_run=args.dry_run)
+                _cycle_count += 1
+                # Refresh news candidates periodically
+                if (config.NEWS_SCAN_ENABLED
+                        and _cycle_count % config.NEWS_SCAN_INTERVAL_CYCLES == 0):
+                    stock_list = get_effective_stock_watchlist(config.STOCK_WATCHLIST)
+                    combined_watchlist = crypto_list + stock_list
+
+                state = run_cycle(state, combined_watchlist, dry_run=args.dry_run)
                 time.sleep(args.interval)
         except KeyboardInterrupt:
             print("\n\n  Monitoring stopped by user.  State is saved.\n")
     else:
-        run_cycle(state, watchlist, dry_run=args.dry_run)
+        run_cycle(state, combined_watchlist, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
     main()
+

@@ -97,6 +97,34 @@ STOCK_WATCHLIST = [
     "TITAN.NS",       # Titan Company         ~₹3,200
     "HINDUNILVR.NS",  # Hindustan Unilever    ~₹2,500
     "CIPLA.NS",       # Cipla                 ~₹1,500
+    "AXISBANK.NS",    # Axis Bank             ~₹1,200
+    "KOTAKBANK.NS",   # Kotak Mahindra Bank   ~₹1,800
+    "BAJFINANCE.NS",  # Bajaj Finance         ~₹7,200
+    "BAJAJFINSV.NS",  # Bajaj Finserv         ~₹1,600
+    "WIPRO.NS",       # Wipro                 ~₹490
+    "JIOFIN.NS",      # Jio Financial Services~₹350
+    "POWERGRID.NS",   # Power Grid Corp       ~₹325
+    "NTPC.NS",        # NTPC                  ~₹360
+    "LTIM.NS",        # LTIMindtree           ~₹4,800
+    "HCLTECH.NS",     # HCL Technologies      ~₹1,450
+    "TECHM.NS",       # Tech Mahindra         ~₹1,250
+    "JSWSTEEL.NS",    # JSW Steel             ~₹900
+    "HINDALCO.NS",    # Hindalco Industries   ~₹600
+    "VEDL.NS",        # Vedanta               ~₹450
+    "ADANIPORTS.NS",  # Adani Ports           ~₹1,400
+    "APOLLOHOSP.NS",  # Apollo Hospitals      ~₹6,200
+    "DRREDDY.NS",     # Dr. Reddy's           ~₹6,100
+    "DIVISLAB.NS",    # Divi's Labs           ~₹3,800
+    "EICHERMOT.NS",   # Eicher Motors         ~₹4,700
+    "GRASIM.NS",      # Grasim Industries     ~₹2,200
+    "ULTRACEMCO.NS",  # UltraTech Cement      ~₹9,800
+    "HEROMOTOCO.NS",  # Hero MotoCorp         ~₹4,600
+    "BAJAJ-AUTO.NS",  # Bajaj Auto            ~₹9,000
+    "NESTLEIND.NS",   # Nestle India          ~₹2,500
+    "BRITANNIA.NS",   # Britannia Industries  ~₹5,200
+    "TATACONSUM.NS",  # Tata Consumer Products~₹1,150
+    "BPCL.NS",        # BPCL                  ~₹600
+    "INDUSINDBK.NS",  # IndusInd Bank         ~₹1,500
 ]
 
 # ── Currency conversion (INR → USD) ──────────────────────────────────────────

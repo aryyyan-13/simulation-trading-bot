@@ -89,6 +89,14 @@ STOCK_WATCHLIST = [
     "ADANIENT.NS",    # Adani Enterprises     ~₹3,200
     "ASIANPAINT.NS",  # Asian Paints          ~₹2,900
     "COALINDIA.NS",   # Coal India            ~₹450   → higher qty per budget
+    "SUNPHARMA.NS",   # Sun Pharmaceutical    ~₹1,500
+    "LT.NS",          # Larsen & Toubro       ~₹3,500
+    "M&M.NS",         # Mahindra & Mahindra   ~₹2,800
+    "ZOMATO.NS",      # Zomato                ~₹180   → higher qty per budget
+    "MARUTI.NS",      # Maruti Suzuki         ~₹12,000
+    "TITAN.NS",       # Titan Company         ~₹3,200
+    "HINDUNILVR.NS",  # Hindustan Unilever    ~₹2,500
+    "CIPLA.NS",       # Cipla                 ~₹1,500
 ]
 
 # ── Currency conversion (INR → USD) ──────────────────────────────────────────

@@ -185,6 +185,7 @@ def _close_position_for_symbol(
             entry_time_ms = op.entry_time_ms,
             exit_time_ms  = now_ms,
             exit_reason   = reason,
+            asset_class   = getattr(op, "asset_class", "crypto"),
         ))
         state.sync_from_portfolio(portfolio, symbol)
         tag = "[STOP LOSS] " if reason == "stop_loss" else ""

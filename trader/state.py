@@ -200,6 +200,7 @@ class TraderState:
             else:
                 entry_ms = new_entry_ms or int(time.time() * 1000)
 
+            asset_class = "stock" if symbol.endswith(".NS") else "crypto"
             self.open_positions[symbol] = OpenPositionSnapshot(
                 symbol             = pos.symbol,
                 side               = pos.side.value,
@@ -208,6 +209,7 @@ class TraderState:
                 entry_fee_paid     = pos.entry_fee_paid,
                 funding_paid_total = pos.funding_paid_total,
                 entry_time_ms      = entry_ms,
+                asset_class        = asset_class,
             )
         else:
             self.open_positions.pop(symbol, None)

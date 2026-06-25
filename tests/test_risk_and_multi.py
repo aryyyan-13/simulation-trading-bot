@@ -60,25 +60,37 @@ class TestCapitalAllocation(unittest.TestCase):
 
     def test_single_symbol_gets_full_balance(self):
         state = _make_state(balance=10_000.0)
-        budget = _allocated_budget(state, ["BTCUSDT"])
+        with patch.object(config, "BUDGET_PER_SYMBOL", None):
+            budget = _allocated_budget(state, ["BTCUSDT"])
         self.assertAlmostEqual(budget, 10_000.0, places=2)
 
     def test_four_symbols_split_equally(self):
         state = _make_state(balance=10_000.0)
         watchlist = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
-        budget = _allocated_budget(state, watchlist)
+        with patch.object(config, "BUDGET_PER_SYMBOL", None):
+            budget = _allocated_budget(state, watchlist)
         self.assertAlmostEqual(budget, 2_500.0, places=2)
 
     def test_budget_reflects_current_balance(self):
         state = _make_state(balance=7_500.0)
-        budget = _allocated_budget(state, ["BTCUSDT", "ETHUSDT"])
+        with patch.object(config, "BUDGET_PER_SYMBOL", None):
+            budget = _allocated_budget(state, ["BTCUSDT", "ETHUSDT"])
         self.assertAlmostEqual(budget, 3_750.0, places=2)
 
     def test_empty_watchlist_does_not_divide_by_zero(self):
         """Empty watchlist must not raise ZeroDivisionError."""
         state = _make_state(balance=10_000.0)
-        budget = _allocated_budget(state, [])
+        with patch.object(config, "BUDGET_PER_SYMBOL", None):
+            budget = _allocated_budget(state, [])
         self.assertGreater(budget, 0)
+
+    def test_fixed_budget_per_symbol(self):
+        """Fixed budget config should overwrite dynamic balance allocation."""
+        state = _make_state(balance=10_000.0)
+        with patch.object(config, "BUDGET_PER_SYMBOL", 50.0):
+            budget = _allocated_budget(state, ["BTCUSDT", "ETHUSDT"])
+        self.assertAlmostEqual(budget, 50.0, places=2)
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════

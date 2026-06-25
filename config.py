@@ -64,6 +64,11 @@ STARTING_FAKE_BALANCE_USDT = 10_000.0
 # unverified math, which breaks the "never fake a number" rule.
 MAX_LEVERAGE = 1
 
+# Fixed budget in USDT allocated to each stock or crypto trade.
+# If set to a number (e.g. 50.0), the bot will allocate exactly this amount per position.
+# If set to None, the bot dynamically divides the balance: budget = balance / len(watchlist).
+BUDGET_PER_SYMBOL = 50.0
+
 # ── Indian Stock Market (NSE) ─────────────────────────────────────────────────
 # The master list of NSE-listed stocks the bot is allowed to monitor and trade.
 # Use the Yahoo Finance ticker format: NSE symbols end with ".NS".

@@ -111,15 +111,11 @@ def _exit_book(raw: float, side: Side) -> list[tuple[float, float]]:
 def _allocated_budget(state: TraderState, watchlist: list[str]) -> float:
     """Return the USDT budget allocated to each symbol.
 
-    Formula: total_equity / number_of_symbols_in_watchlist.
-    total_equity = realized cash balance (does NOT include unrealized P&L,
-    because mark prices for all positions are not fetched here — that would
-    require an extra API call per position per cycle and is not worth the
-    complexity for paper trading at 1x leverage).
-
-    Keeping it simple is both honest and safe: we may slightly undersize
-    entries when positions are in profit, which is conservative.
+    If config.BUDGET_PER_SYMBOL is set, returns that fixed budget.
+    Otherwise, dynamically divides the cash balance: total_equity / number of symbols.
     """
+    if getattr(config, "BUDGET_PER_SYMBOL", None) is not None:
+        return float(config.BUDGET_PER_SYMBOL)
     n = max(1, len(watchlist))
     return state.balance / n
 

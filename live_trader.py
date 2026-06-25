@@ -123,17 +123,51 @@ def _allocated_budget(state: TraderState, watchlist: list[str]) -> float:
 # ── Stop-loss check ────────────────────────────────────────────────────────
 
 def _is_stop_loss_triggered(op, mark_price: float) -> bool:
-    """Return True if the open position has lost more than STOP_LOSS_PCT.
+    """Return True if the open position has hit either static or trailing stop-loss.
 
-    If config.STOP_LOSS_PCT is None, always returns False (disabled).
+    Checks both:
+    1. Static stop-loss relative to entry price (config.STOP_LOSS_PCT)
+    2. Trailing stop-loss relative to peak/trough price (config.TRAILING_STOP_PCT)
     """
-    if config.STOP_LOSS_PCT is None:
+    # 1. Static Stop-Loss check
+    if getattr(config, "STOP_LOSS_PCT", None) is not None:
+        if op.side == "LONG":
+            loss_pct = (op.entry_price - mark_price) / op.entry_price
+        else:
+            loss_pct = (mark_price - op.entry_price) / op.entry_price
+        if loss_pct >= config.STOP_LOSS_PCT:
+            return True
+
+    # 2. Trailing Stop-Loss check
+    trailing_stop_pct = getattr(config, "TRAILING_STOP_PCT", None)
+    if trailing_stop_pct is not None:
+        peak_px = getattr(op, "peak_price", 0.0)
+        if peak_px <= 0.0:
+            peak_px = op.entry_price
+        if op.side == "LONG":
+            trail_loss_pct = (peak_px - mark_price) / peak_px
+        else:
+            trail_loss_pct = (mark_price - peak_px) / peak_px
+        if trail_loss_pct >= trailing_stop_pct:
+            return True
+
+    return False
+
+
+def _is_take_profit_triggered(op, mark_price: float) -> bool:
+    """Return True if the open position has hit the take-profit target.
+
+    If config.TAKE_PROFIT_PCT is None, always returns False (disabled).
+    """
+    tp_pct = getattr(config, "TAKE_PROFIT_PCT", None)
+    if tp_pct is None:
         return False
     if op.side == "LONG":
-        loss_pct = (op.entry_price - mark_price) / op.entry_price
+        gain_pct = (mark_price - op.entry_price) / op.entry_price
     else:
-        loss_pct = (mark_price - op.entry_price) / op.entry_price
-    return loss_pct >= config.STOP_LOSS_PCT
+        gain_pct = (op.entry_price - mark_price) / op.entry_price
+    return gain_pct >= tp_pct
+
 
 
 # ── Close a position (shared logic) ───────────────────────────────────────
@@ -184,7 +218,12 @@ def _close_position_for_symbol(
             asset_class   = getattr(op, "asset_class", "crypto"),
         ))
         state.sync_from_portfolio(portfolio, symbol)
-        tag = "[STOP LOSS] " if reason == "stop_loss" else ""
+        if reason == "stop_loss":
+            tag = "[STOP LOSS] "
+        elif reason == "take_profit":
+            tag = "[TAKE PROFIT] "
+        else:
+            tag = ""
         state.log(
             f"{tag}CLOSED {op.side} {symbol} {op.qty:.6f} @ ${cr.exit_price:,.2f}"
             f"  net {pnl_str}"
@@ -477,13 +516,26 @@ def _run_symbol_cycle(
 
         price_usd = _inr_to_usd(price_inr)
 
-        # 3. Stop-loss check (uses USD price for consistency)
+        # 3. Peak price update & Risk check (uses USD price for consistency)
         op = state.open_positions.get(symbol)
-        if op and _is_stop_loss_triggered(op, price_usd) and not dry_run:
-            action = _close_position_for_symbol(
-                state, symbol, price_usd, reason="stop_loss", dry_run=False
-            )
-            return None, None, {}, f"[STOP LOSS] {action}"
+        if op:
+            if op.side == "LONG":
+                op.peak_price = max(op.peak_price, price_usd)
+            else:
+                op.peak_price = min(op.peak_price, price_usd)
+
+            if not dry_run:
+                if _is_take_profit_triggered(op, price_usd):
+                    action = _close_position_for_symbol(
+                        state, symbol, price_usd, reason="take_profit", dry_run=False
+                    )
+                    return None, None, {}, f"[TAKE PROFIT] {action}"
+                elif _is_stop_loss_triggered(op, price_usd):
+                    action = _close_position_for_symbol(
+                        state, symbol, price_usd, reason="stop_loss", dry_run=False
+                    )
+                    return None, None, {}, f"[STOP LOSS] {action}"
+
 
         # 4. Candles
         try:
@@ -553,13 +605,26 @@ def _run_symbol_cycle(
         print(f"  [WARNING] {symbol}: could not fetch price — {exc}")
         return None, None, {}, "fetch error — skipped"
 
-    # 2. Stop-loss check (priority: runs before candle logic)
+    # 2. Peak price update & Risk check (priority: runs before candle logic)
     op = state.open_positions.get(symbol)
-    if op and _is_stop_loss_triggered(op, mf.mark_price) and not dry_run:
-        action = _close_position_for_symbol(
-            state, symbol, mf.mark_price, reason="stop_loss", dry_run=False
-        )
-        return mf, None, {}, f"[STOP LOSS] {action}"
+    if op:
+        if op.side == "LONG":
+            op.peak_price = max(op.peak_price, mf.mark_price)
+        else:
+            op.peak_price = min(op.peak_price, mf.mark_price)
+
+        if not dry_run:
+            if _is_take_profit_triggered(op, mf.mark_price):
+                action = _close_position_for_symbol(
+                    state, symbol, mf.mark_price, reason="take_profit", dry_run=False
+                )
+                return mf, None, {}, f"[TAKE PROFIT] {action}"
+            elif _is_stop_loss_triggered(op, mf.mark_price):
+                action = _close_position_for_symbol(
+                    state, symbol, mf.mark_price, reason="stop_loss", dry_run=False
+                )
+                return mf, None, {}, f"[STOP LOSS] {action}"
+
 
     # 3. Apply funding settlement if nextFundingTime has advanced
     if (
@@ -623,6 +688,61 @@ def _run_symbol_cycle(
 
 
 
+# ── Auto-close orphaned positions ──────────────────────────────────────
+
+def _close_delisted_positions(
+    state:    TraderState,
+    watchlist: list[str],
+    dry_run:  bool = False,
+) -> None:
+    """Close any open positions whose symbols have been removed from the watchlist.
+
+    This runs at the start of every cycle.  If a stock was removed from
+    config.STOCK_WATCHLIST (e.g. because its backtest return is negative), any
+    existing open position for that symbol will be closed at the current market
+    price before the regular per-symbol loop executes.
+
+    This prevents orphaned positions from being held indefinitely on stocks we
+    have deliberately decided to stop trading.
+    """
+    watchlist_set = set(watchlist)
+    orphaned = [
+        sym for sym in list(state.open_positions.keys())
+        if sym not in watchlist_set
+    ]
+    if not orphaned:
+        return
+
+    print(f"\n  [WATCHLIST CHANGE] Closing {len(orphaned)} position(s) for"
+          f" removed symbol(s): {', '.join(orphaned)}")
+
+    for symbol in orphaned:
+        try:
+            if _is_stock(symbol):
+                # Fetch current INR price and convert to USD
+                price_inr = sc.get_nse_price(symbol)
+                mark_price = _inr_to_usd(price_inr)
+            else:
+                mf = ex.get_mark_and_funding(symbol)
+                mark_price = mf.mark_price
+        except Exception as exc:
+            print(f"  [WARNING] Could not fetch price for {symbol} to close orphan: {exc}")
+            print(f"  [WARNING] {symbol} position will be closed at entry price as fallback.")
+            op = state.open_positions.get(symbol)
+            mark_price = op.entry_price if op else 0.0
+
+        if mark_price <= 0:
+            continue
+
+        result = _close_position_for_symbol(
+            state, symbol, mark_price,
+            reason="watchlist_removed",
+            dry_run=dry_run,
+        )
+        print(f"  [{symbol}] {result}")
+
+
+
 # ── Full polling cycle (all symbols) ──────────────────────────────────────
 
 def run_cycle(
@@ -632,6 +752,12 @@ def run_cycle(
 ) -> TraderState:
     """Fetch live data for every symbol, check stop-losses, evaluate signals,
     optionally execute, print the combined status panel, and save state."""
+
+    # Step 0: Auto-close positions for symbols removed from the watchlist.
+    # This gracefully exits any stock/crypto that is no longer being tracked
+    # (e.g. because it was identified as a consistent loser and removed from
+    # config.STOCK_WATCHLIST based on backtest results).
+    _close_delisted_positions(state, watchlist, dry_run=dry_run)
 
     mf_map:     dict[str, ex.MarkAndFunding]    = {}
     analyses:   dict[str, MultiTimeframeResult] = {}

@@ -69,67 +69,53 @@ MAX_LEVERAGE = 1
 # If set to None, the bot dynamically divides the balance: budget = balance / len(watchlist).
 BUDGET_PER_SYMBOL = 50.0
 
+# --- Risk Management (Loss Prevention & Take Profit) -----------------------
+TAKE_PROFIT_PCT = 0.05       # 5% take-profit target
+TRAILING_STOP_PCT = 0.015    # 1.5% trailing stop-loss (trails the peak/trough price)
+
+# --- Trend Regime Filter (ADX) --------------------------------------------
+ADX_PERIOD = 14
+ADX_TREND_THRESHOLD = 25     # ADX > 25 indicates a strong trend; below is sideways
+
 # ── Indian Stock Market (NSE) ─────────────────────────────────────────────────
-# The master list of NSE-listed stocks the bot is allowed to monitor and trade.
-# Use the Yahoo Finance ticker format: NSE symbols end with ".NS".
-# Additional stocks discovered via news headlines are merged in at runtime.
+# PROFIT-FILTER APPLIED (2026-06-25): Only stocks with a POSITIVE backtest
+# return are included. All 22 stocks with negative historical returns have been
+# removed to prevent the bot from allocating capital to chronically losing assets.
 #
-# These are liquid, high-volume NSE stocks spanning a wide price range —
-# lower-priced stocks (e.g. TATASTEEL) will automatically result in larger
-# share quantities being bought for the same budget ("bulk buying").
+# Backtest source: data/stock_backtest_analysis.csv (47 NSE stocks, ~3 months).
+# Stocks are sorted by descending Sharpe ratio (risk-adjusted return).
+#
+# Removed (negative return): RELIANCE(-3.04%), TCS(-8.79%), HDFCBANK(-3.35%),
+#   ITC(+0.81% marginal), SBIN(-3.29%), TATASTEEL(-7.51%), BAJFINANCE(-4.02%),
+#   BAJAJFINSV(-4.07%), ADANIENT(-4.86%), ASIANPAINT(-16.04%), COALINDIA(-11.44%),
+#   SUNPHARMA(-4.58%), LT(-10.38%), M&M(-0.95%), MARUTI(-1.21%), JIOFIN(-2.05%),
+#   POWERGRID(-13.52%), NTPC(-4.42%), HCLTECH(-3.25%), JSWSTEEL(-6.08%),
+#   VEDL(-2.85%), ADANIPORTS(-11.73%), DRREDDY(-1.05%), DIVISLAB(-11.36%),
+#   GRASIM(-10.16%), HEROMOTOCO(-12.93%), BAJAJ-AUTO(-8.59%), NESTLEIND(-4.97%),
+#   BRITANNIA(-14.22%), TATACONSUM(-12.10%), BPCL(-0.63%), INDUSINDBK(-10.17%)
 #
 # Source for valid NSE tickers: https://www.nseindia.com/ (2026-06-24)
 STOCK_WATCHLIST = [
-    "RELIANCE.NS",    # Reliance Industries   ~₹3,000
-    "TCS.NS",         # Tata Consultancy Svcs ~₹4,000
-    "HDFCBANK.NS",    # HDFC Bank             ~₹1,900
-    "INFY.NS",        # Infosys               ~₹1,800
-    "TATASTEEL.NS",   # Tata Steel            ~₹165   → higher qty per budget
-    "ITC.NS",         # ITC Ltd               ~₹490
-    "SBIN.NS",        # State Bank of India   ~₹790
-    "ONGC.NS",        # Oil & Natural Gas     ~₹275   → higher qty per budget
-    "ICICIBANK.NS",   # ICICI Bank            ~₹1,100
-    "BHARTIARTL.NS",  # Bharti Airtel         ~₹1,400
-    "TATAMOTORS.NS",  # Tata Motors           ~₹950
-    "ADANIENT.NS",    # Adani Enterprises     ~₹3,200
-    "ASIANPAINT.NS",  # Asian Paints          ~₹2,900
-    "COALINDIA.NS",   # Coal India            ~₹450   → higher qty per budget
-    "SUNPHARMA.NS",   # Sun Pharmaceutical    ~₹1,500
-    "LT.NS",          # Larsen & Toubro       ~₹3,500
-    "M&M.NS",         # Mahindra & Mahindra   ~₹2,800
-    "ZOMATO.NS",      # Zomato                ~₹180   → higher qty per budget
-    "MARUTI.NS",      # Maruti Suzuki         ~₹12,000
-    "TITAN.NS",       # Titan Company         ~₹3,200
-    "HINDUNILVR.NS",  # Hindustan Unilever    ~₹2,500
-    "CIPLA.NS",       # Cipla                 ~₹1,500
-    "AXISBANK.NS",    # Axis Bank             ~₹1,200
-    "KOTAKBANK.NS",   # Kotak Mahindra Bank   ~₹1,800
-    "BAJFINANCE.NS",  # Bajaj Finance         ~₹7,200
-    "BAJAJFINSV.NS",  # Bajaj Finserv         ~₹1,600
-    "WIPRO.NS",       # Wipro                 ~₹490
-    "JIOFIN.NS",      # Jio Financial Services~₹350
-    "POWERGRID.NS",   # Power Grid Corp       ~₹325
-    "NTPC.NS",        # NTPC                  ~₹360
-    "LTIM.NS",        # LTIMindtree           ~₹4,800
-    "HCLTECH.NS",     # HCL Technologies      ~₹1,450
-    "TECHM.NS",       # Tech Mahindra         ~₹1,250
-    "JSWSTEEL.NS",    # JSW Steel             ~₹900
-    "HINDALCO.NS",    # Hindalco Industries   ~₹600
-    "VEDL.NS",        # Vedanta               ~₹450
-    "ADANIPORTS.NS",  # Adani Ports           ~₹1,400
-    "APOLLOHOSP.NS",  # Apollo Hospitals      ~₹6,200
-    "DRREDDY.NS",     # Dr. Reddy's           ~₹6,100
-    "DIVISLAB.NS",    # Divi's Labs           ~₹3,800
-    "EICHERMOT.NS",   # Eicher Motors         ~₹4,700
-    "GRASIM.NS",      # Grasim Industries     ~₹2,200
-    "ULTRACEMCO.NS",  # UltraTech Cement      ~₹9,800
-    "HEROMOTOCO.NS",  # Hero MotoCorp         ~₹4,600
-    "BAJAJ-AUTO.NS",  # Bajaj Auto            ~₹9,000
-    "NESTLEIND.NS",   # Nestle India          ~₹2,500
-    "BRITANNIA.NS",   # Britannia Industries  ~₹5,200
-    "TATACONSUM.NS",  # Tata Consumer Products~₹1,150
-    "BPCL.NS",        # BPCL                  ~₹600
-    "INDUSINDBK.NS",  # IndusInd Bank         ~₹1,500
+    # ── Tier 1: Highest Sharpe + Positive Return (Core Holdings) ──────────
+    "TITAN.NS",       # Titan Company         ~₹3,200  | +11.42% return | Sharpe 9.92 ★
+    "AXISBANK.NS",    # Axis Bank             ~₹1,200  | +13.77% return | Sharpe 9.59 ★
+    "WIPRO.NS",       # Wipro                 ~₹490    | +15.26% return | Sharpe 8.25 ★
+    "ICICIBANK.NS",   # ICICI Bank            ~₹1,100  | +6.55%  return | Sharpe 6.72
+    "ONGC.NS",        # Oil & Natural Gas     ~₹275    | +9.38%  return | Sharpe 5.69
+    "INFY.NS",        # Infosys               ~₹1,800  | +7.60%  return | Sharpe 5.61
+
+    # ── Tier 2: Good Return, Acceptable Risk ──────────────────────────────
+    "BHARTIARTL.NS",  # Bharti Airtel         ~₹1,400  | +4.59%  return | Sharpe 5.47
+    "KOTAKBANK.NS",   # Kotak Mahindra Bank   ~₹1,800  | +4.46%  return | Sharpe 4.93
+    "HINDUNILVR.NS",  # Hindustan Unilever    ~₹2,500  | +3.33%  return | Sharpe 4.74
+    "APOLLOHOSP.NS",  # Apollo Hospitals      ~₹6,200  | +2.22%  return | Sharpe 4.09
+    "CIPLA.NS",       # Cipla                 ~₹1,500  | +3.24%  return | Sharpe 3.33
+    "ULTRACEMCO.NS",  # UltraTech Cement      ~₹9,800  | +4.55%  return | Sharpe 4.16
+
+    # ── Tier 3: Lower Return but Still Positive ───────────────────────────
+    "EICHERMOT.NS",   # Eicher Motors         ~₹4,700  | +3.33%  return | Sharpe 2.66
+    "HINDALCO.NS",    # Hindalco Industries   ~₹600    | +2.28%  return | Sharpe 1.65
+    "TECHM.NS",       # Tech Mahindra         ~₹1,250  | +1.07%  return | Sharpe 1.87
 ]
 
 # ── Currency conversion (INR → USD) ──────────────────────────────────────────

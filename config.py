@@ -83,6 +83,12 @@ STOCK_WATCHLIST = [
     "ITC.NS",         # ITC Ltd               ~₹490
     "SBIN.NS",        # State Bank of India   ~₹790
     "ONGC.NS",        # Oil & Natural Gas     ~₹275   → higher qty per budget
+    "ICICIBANK.NS",   # ICICI Bank            ~₹1,100
+    "BHARTIARTL.NS",  # Bharti Airtel         ~₹1,400
+    "TATAMOTORS.NS",  # Tata Motors           ~₹950
+    "ADANIENT.NS",    # Adani Enterprises     ~₹3,200
+    "ASIANPAINT.NS",  # Asian Paints          ~₹2,900
+    "COALINDIA.NS",   # Coal India            ~₹450   → higher qty per budget
 ]
 
 # ── Currency conversion (INR → USD) ──────────────────────────────────────────
